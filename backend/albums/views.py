@@ -155,12 +155,21 @@ class AlbumViewSet(viewsets.ModelViewSet):
 @api_view(["GET"])
 @permission_classes([IsAdminUser])
 def dashboard_stats(request):
+    from .qiniu_stats import get_top_photos, get_top_albums, get_uv_data
+
+    top_photos = get_top_photos(limit=10)
+    top_albums = get_top_albums(limit=10)
+    uv_data = get_uv_data(days=7)
+
     return Response({
         "code": 0,
         "data": {
             "albums": Album.objects.count(),
             "photos": Photo.objects.count(),
             "users": User.objects.count(),
+            "top_photos": top_photos,
+            "top_albums": top_albums,
+            "uv_data": uv_data,
         },
         "message": "ok",
     })
