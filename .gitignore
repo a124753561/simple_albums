@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.envbak
+*.local
+__pycache__/
+*.pyc
+db.sqlite3
+venv/
+staticfiles/
+media/
+.idea/
