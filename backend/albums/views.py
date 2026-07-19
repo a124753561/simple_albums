@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
+from concurrent.futures import ThreadPoolExecutor
+from django.core.cache import cache
 from .models import Category, Album, Photo
 from users.models import User
 from .serializers import (
@@ -155,21 +157,35 @@ class AlbumViewSet(viewsets.ModelViewSet):
 @api_view(["GET"])
 @permission_classes([IsAdminUser])
 def dashboard_stats(request):
-    from .qiniu_stats import get_top_photos, get_top_albums, get_uv_data
+    cache_key = "dashboard_stats"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response({"code": 0, "data": cached, "message": "ok"})
 
-    top_photos = get_top_photos(limit=10)
-    top_albums = get_top_albums(limit=10)
-    uv_data = get_uv_data(days=7)
+    from .qiniu_stats import get_top_photos, get_top_albums, get_uv_data, get_top_count_urls
 
-    return Response({
-        "code": 0,
-        "data": {
-            "albums": Album.objects.count(),
-            "photos": Photo.objects.count(),
-            "users": User.objects.count(),
-            "top_photos": top_photos,
-            "top_albums": top_albums,
-            "uv_data": uv_data,
-        },
-        "message": "ok",
-    })
+    top_data = None
+    uv_data = {"points": [], "values": []}
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            future_top = pool.submit(get_top_count_urls, days=7)
+            future_uv = pool.submit(get_uv_data, days=7)
+            top_data = future_top.result(timeout=20)
+            uv_data = future_uv.result(timeout=20)
+    except Exception:
+        pass
+
+    top_photos = get_top_photos(limit=10, top_url_data=top_data) if top_data else []
+    top_albums = get_top_albums(limit=10, top_url_data=top_data) if top_data else []
+
+    data = {
+        "albums": Album.objects.count(),
+        "photos": Photo.objects.count(),
+        "users": User.objects.count(),
+        "top_photos": top_photos,
+        "top_albums": top_albums,
+        "uv_data": uv_data,
+    }
+    cache.set(cache_key, data, 300)
+
+    return Response({"code": 0, "data": data, "message": "ok"})

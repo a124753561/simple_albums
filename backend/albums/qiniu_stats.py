@@ -44,14 +44,8 @@ def get_top_count_urls(days=7):
     return None
 
 
-def get_top_photos(limit=10):
-    """获取访问量 Top 图片列表，匹配本地 Photo 记录"""
-    data = get_top_count_urls(days=7)
-    if not data:
-        return []
-
-    from .models import Photo
-
+def _build_url_count(data):
+    """从 Fusion API 返回数据构建 path→count 映射字典"""
     urls = data.get("urls", [])
     counts = data.get("count", [])
     url_count = {}
@@ -59,6 +53,22 @@ def get_top_photos(limit=10):
         if i < len(counts):
             path = urlparse(u).path
             url_count[path] = counts[i]
+    return url_count
+
+
+def get_top_photos(limit=10, top_url_data=None):
+    """获取访问量 Top 图片列表，匹配本地 Photo 记录
+
+    top_url_data: get_top_count_urls() 的返回值，传入可避免重复调用 API
+    """
+    if top_url_data is None:
+        top_url_data = get_top_count_urls(days=7)
+    if not top_url_data:
+        return []
+
+    from .models import Photo
+
+    url_count = _build_url_count(top_url_data)
 
     photos = list(Photo.objects.select_related("album").all())
     matched = []
@@ -108,21 +118,19 @@ def get_uv_data(days=7):
     return {"points": [], "values": []}
 
 
-def get_top_albums(limit=10):
-    """获取访问量 Top 相册列表，按相册内所有图片访问量汇总排名"""
-    data = get_top_count_urls(days=7)
-    if not data:
+def get_top_albums(limit=10, top_url_data=None):
+    """获取访问量 Top 相册列表，按相册内所有图片访问量汇总排名
+
+    top_url_data: get_top_count_urls() 的返回值，传入可避免重复调用 API
+    """
+    if top_url_data is None:
+        top_url_data = get_top_count_urls(days=7)
+    if not top_url_data:
         return []
 
     from .models import Photo
 
-    urls = data.get("urls", [])
-    counts = data.get("count", [])
-    url_count = {}
-    for i, u in enumerate(urls):
-        if i < len(counts):
-            path = urlparse(u).path
-            url_count[path] = counts[i]
+    url_count = _build_url_count(top_url_data)
 
     # 聚合每个相册的访问量
     album_stats = {}  # album_id → {album_title, cover, total_views}

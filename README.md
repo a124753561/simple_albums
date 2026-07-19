@@ -37,8 +37,8 @@ npm install && npm run dev
 ## 生产环境
 
 ```bash
-# 后端 — 使用 gunicorn
-gunicorn config.wsgi:application -b 127.0.0.1:8000 -w 4
+# 后端 — 使用 gunicorn（threaded worker，提升 I/O 密集型请求并发能力）
+gunicorn config.wsgi:application -b 127.0.0.1:8000 -w 4 --threads 2
 
 # 前端 — 构建静态文件
 cd admin-frontend && npm run build   # dist/ 部署到 /admin/
