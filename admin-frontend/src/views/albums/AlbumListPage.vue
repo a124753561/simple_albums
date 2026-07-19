@@ -3,8 +3,14 @@
     <div style="display:flex;gap:12px;margin-bottom:16px">
       <el-input v-model="search" placeholder="搜索相册..." style="width:240px" clearable @change="onSearch"/>
       <el-button type="primary" @click="openDialog()">新增相册</el-button>
+      <el-button :type="reorderMode ? 'warning' : 'default'" @click="toggleReorder">{{ reorderMode ? '完成排序' : '重排序' }}</el-button>
     </div>
-    <el-table :data="albums" v-loading="loading">
+    <el-table ref="tableRef" :data="albums" row-key="id" v-loading="loading">
+      <el-table-column v-if="reorderMode" label="" width="44" fixed="left">
+        <template #default>
+          <el-icon class="drag-handle" :size="18" style="cursor:grab;color:#999"><Rank /></el-icon>
+        </template>
+      </el-table-column>
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column label="封面" width="80">
         <template #default="{ row }">
@@ -20,7 +26,12 @@
           <el-switch :model-value="row.homepage_show" @change="toggleHomepage(row)" />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="240">
+      <el-table-column label="禁用" width="80">
+        <template #default="{ row }">
+          <el-switch :model-value="row.is_disabled" @change="toggleDisabled(row)" />
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button text type="primary" @click="openDialog(row)">编辑</el-button>
           <el-button text type="success" @click="$router.push(`/albums/${row.id}/photos`)">图片</el-button>
@@ -48,9 +59,15 @@
             <el-option v-for="c in flatCategories" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="封面URL"><el-input v-model="form.cover" placeholder="留空自动取第一张" /></el-form-item>
+        <el-form-item label="封面">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <el-image v-if="form.cover" :src="form.cover" fit="cover" style="width:100px;height:100px;border-radius:4px;border:1px solid #ebeef5" />
+            <span v-else style="color:#ccc;font-size:13px">暂无封面</span>
+            <el-input v-model="form.cover" placeholder="或手动输入URL" size="small" />
+          </div>
+        </el-form-item>
         <el-form-item label="首页显示"><el-switch v-model="form.homepage_show" /></el-form-item>
-        <el-form-item label="排序"><el-input-number v-model="form.sort_order" :min="0" /></el-form-item>
+        <el-form-item label="禁用"><el-switch v-model="form.is_disabled" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -61,8 +78,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Rank } from '@element-plus/icons-vue'
+import { useDraggable } from 'vue-draggable-plus'
 import request from '@/utils/request'
 
 const albums = ref<any[]>([])
@@ -76,7 +95,11 @@ const saving = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editId = ref<number | null>(null)
-const form = ref({ title: '', description: '', category: '', cover: '', homepage_show: false, sort_order: 0 })
+const form = ref({ title: '', description: '', category: '', cover: '', homepage_show: false, is_disabled: false })
+const tableRef = ref()
+const tbodyRef = ref<HTMLElement | null>(null)
+const reorderMode = ref(false)
+let sortableDestroy: (() => void) | null = null
 
 async function fetchAlbums() {
   loading.value = true
@@ -86,6 +109,42 @@ async function fetchAlbums() {
   albums.value = res.data.data.results || []
   total.value = res.data.data.count
   loading.value = false
+  if (reorderMode.value) initSortable()
+}
+
+function initSortable() {
+  destroySortable()
+  nextTick(() => {
+    tbodyRef.value = tableRef.value?.$el?.querySelector('.el-table__body-wrapper tbody') as HTMLElement
+    if (tbodyRef.value && albums.value.length > 0) {
+      const instance = useDraggable(tbodyRef, albums, {
+        handle: '.drag-handle',
+        animation: 150,
+      })
+      sortableDestroy = () => instance.destroy()
+    }
+  })
+}
+
+function destroySortable() {
+  if (sortableDestroy) { sortableDestroy(); sortableDestroy = null }
+}
+
+function toggleReorder() {
+  reorderMode.value = !reorderMode.value
+  if (reorderMode.value) {
+    initSortable()
+  } else {
+    destroySortable()
+    saveOrder()
+  }
+}
+
+function saveOrder() {
+  const orders = albums.value.map((a: any, idx: number) => ({ id: a.id, sort_order: idx }))
+  request.post('/albums/reorder/', { orders }).then(() => {
+    ElMessage.success('排序已保存')
+  })
 }
 
 function onPageChange(page: number) {
@@ -114,11 +173,11 @@ function openDialog(row?: any) {
     isEdit.value = true; editId.value = row.id
     form.value = {
       title: row.title, description: row.description || '', category: row.category,
-      cover: row.cover, homepage_show: row.homepage_show, sort_order: row.sort_order,
+      cover: row.cover, homepage_show: row.homepage_show, is_disabled: row.is_disabled,
     }
   } else {
     isEdit.value = false; editId.value = null
-    form.value = { title: '', description: '', category: '', cover: '', homepage_show: false, sort_order: 0 }
+    form.value = { title: '', description: '', category: '', cover: '', homepage_show: false, is_disabled: false }
   }
   dialogVisible.value = true
 }
@@ -129,7 +188,7 @@ async function handleSave() {
     if (isEdit.value) {
       await request.patch(`/albums/${editId.value}/`, form.value)
     } else {
-      await request.post('/albums/', form.value)
+      await request.post('/albums/', { ...form.value, sort_order: albums.value.length })
     }
     ElMessage.success(isEdit.value ? '更新成功' : '创建成功')
     dialogVisible.value = false
@@ -142,6 +201,11 @@ async function toggleHomepage(row: any) {
   fetchAlbums()
 }
 
+async function toggleDisabled(row: any) {
+  await request.patch(`/albums/${row.id}/`, { is_disabled: !row.is_disabled })
+  fetchAlbums()
+}
+
 async function handleDelete(row: any) {
   await ElMessageBox.confirm('确定删除该相册？将同时删除所有图片！', '确认', { type: 'warning' })
   await request.delete(`/albums/${row.id}/`)
@@ -151,3 +215,8 @@ async function handleDelete(row: any) {
 
 onMounted(() => { fetchAlbums(); fetchFlatCategories() })
 </script>
+
+<style scoped>
+:deep(.drag-handle) { cursor: grab; }
+:deep(.sortable-ghost) { opacity: 0.4; background: #ecf5ff; }
+</style>

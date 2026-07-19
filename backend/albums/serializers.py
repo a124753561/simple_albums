@@ -55,7 +55,7 @@ class AlbumListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Album
-        fields = ["id", "title", "cover", "category", "category_name", "homepage_show",
+        fields = ["id", "title", "cover", "category", "category_name", "homepage_show", "is_disabled",
                   "sort_order", "photo_count", "created_at", "updated_at"]
         read_only_fields = ["id", "photo_count", "created_at", "updated_at"]
 
@@ -67,12 +67,12 @@ class AlbumDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Album
         fields = ["id", "title", "description", "cover", "category", "category_name",
-                  "homepage_show", "sort_order", "photo_count", "photos", "created_at", "updated_at"]
+                  "homepage_show", "is_disabled", "sort_order", "photo_count", "photos", "created_at", "updated_at"]
         read_only_fields = ["id", "photo_count", "created_at", "updated_at"]
 
 
 class AlbumCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Album
-        fields = ["id", "title", "description", "cover", "category", "homepage_show", "sort_order"]
+        fields = ["id", "title", "description", "cover", "category", "homepage_show", "is_disabled", "sort_order"]
         read_only_fields = ["id"]

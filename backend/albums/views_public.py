@@ -16,7 +16,7 @@ class PublicPagination(PageNumberPagination):
 @permission_classes([AllowAny])
 def public_homepage_albums(request):
     """首页相册（homepage_show=true）"""
-    albums = Album.objects.filter(homepage_show=True).order_by("sort_order", "-created_at")
+    albums = Album.objects.filter(homepage_show=True, is_disabled=False).order_by("sort_order", "-created_at")
     paginator = PublicPagination()
     page = paginator.paginate_queryset(albums, request)
     if page is not None:
@@ -40,7 +40,7 @@ def public_homepage_albums(request):
 def public_albums(request):
     """全部相册"""
     category = request.query_params.get("category")
-    albums = Album.objects.all().order_by("sort_order", "-created_at")
+    albums = Album.objects.filter(is_disabled=False).order_by("sort_order", "-created_at")
     if category:
         albums = albums.filter(category_id=category)
     paginator = PublicPagination()

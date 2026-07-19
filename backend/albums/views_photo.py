@@ -160,3 +160,45 @@ def photo_update(request, album_id, photo_id):
     photo.save()
     serializer = PhotoSerializer(photo)
     return Response({"code": 0, "data": serializer.data, "message": "更新成功"})
+
+
+@api_view(["POST"])
+def photo_reorder(request, album_id):
+    """批量更新图片排序"""
+    try:
+        album = Album.objects.get(id=album_id)
+    except Album.DoesNotExist:
+        return Response({
+            "code": 404, "data": None, "message": "相册不存在"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    orders = request.data.get("orders", [])
+    if not orders:
+        return Response({
+            "code": 400, "data": None, "message": "orders 不能为空"
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    id_map = {item["id"]: item["sort_order"] for item in orders}
+    photos = list(Photo.objects.filter(id__in=list(id_map.keys()), album=album))
+    for photo in photos:
+        photo.sort_order = id_map[photo.id]
+    Photo.objects.bulk_update(photos, ["sort_order"])
+    return Response({"code": 0, "data": None, "message": "排序已更新"})
+
+
+@api_view(["POST"])
+def photo_set_cover(request, album_id, photo_id):
+    """将图片设为相册封面"""
+    try:
+        photo = Photo.objects.get(id=photo_id, album_id=album_id)
+    except Photo.DoesNotExist:
+        return Response({
+            "code": 404, "data": None, "message": "图片不存在"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    album = photo.album
+    album.cover = photo.url
+    album.save()
+    return Response({
+        "code": 0, "data": {"cover": album.cover}, "message": "已设为首页封面"
+    })

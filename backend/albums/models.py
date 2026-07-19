@@ -30,6 +30,7 @@ class Album(models.Model):
     )
     cover = models.URLField(blank=True, default="", verbose_name="封面图")
     homepage_show = models.BooleanField(default=False, verbose_name="首页显示")
+    is_disabled = models.BooleanField(default=False, verbose_name="禁用")
     sort_order = models.IntegerField(default=0, verbose_name="排序")
     photo_count = models.IntegerField(default=0, verbose_name="图片数量")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")

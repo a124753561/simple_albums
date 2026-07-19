@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
+from django.db.models import F
 from concurrent.futures import ThreadPoolExecutor
 from django.core.cache import cache
 from .models import Category, Album, Photo
@@ -145,6 +146,22 @@ class AlbumViewSet(viewsets.ModelViewSet):
         return Response({
             "code": 0, "data": AlbumDetailSerializer(serializer.instance).data, "message": "更新成功"
         })
+
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        """批量更新相册排序"""
+        orders = request.data.get("orders", [])
+        if not orders:
+            return Response({
+                "code": 400, "data": None, "message": "orders 不能为空"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        id_map = {item["id"]: item["sort_order"] for item in orders}
+        albums = list(Album.objects.filter(id__in=list(id_map.keys())))
+        for album in albums:
+            album.sort_order = id_map[album.id]
+        Album.objects.bulk_update(albums, ["sort_order"])
+        return Response({"code": 0, "data": None, "message": "排序已更新"})
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

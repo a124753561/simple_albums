@@ -15,21 +15,42 @@
 
     <el-card>
       <template #header>
-        <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span>图片管理 ({{ photos.length }} 张)</span>
-          <div style="display:flex;gap:8px">
-            <el-button type="primary" @click="uploadVisible = true">选择文件上传</el-button>
-            <el-button :type="batchMode ? 'warning' : 'default'" @click="toggleBatchMode">
-              {{ batchMode ? '退出编辑' : '批量编辑' }}
-            </el-button>
-            <el-button v-if="batchMode" type="danger" :disabled="selectedIds.length === 0" @click="batchDelete">
-              批量删除
-            </el-button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <template v-if="!batchMode">
+              <el-button type="primary" @click="uploadVisible = true">选择文件上传</el-button>
+              <el-button @click="toggleBatchMode">操作</el-button>
+              <el-button-group>
+                <el-button :type="viewMode === 'grid' ? 'primary' : 'default'" @click="viewMode = 'grid'">
+                  <el-icon><Grid /></el-icon>
+                </el-button>
+                <el-button :type="viewMode === 'list' ? 'primary' : 'default'" @click="viewMode = 'list'">
+                  <el-icon><List /></el-icon>
+                </el-button>
+              </el-button-group>
+            </template>
+            <template v-else>
+              <el-checkbox
+                :model-value="allSelected"
+                :indeterminate="isIndeterminate"
+                @change="(val: boolean) => val ? selectAll() : deselectAll()"
+              >全选</el-checkbox>
+              <el-button type="danger" :disabled="selectedIds.length === 0" @click="batchDelete">
+                批量删除 ({{ selectedIds.length }})
+              </el-button>
+              <el-button type="success" :disabled="selectedIds.length !== 1" @click="setAsCover">
+                设为首页
+              </el-button>
+              <el-button text @click="deselectAll" :disabled="selectedIds.length === 0">取消全选</el-button>
+              <el-button type="warning" @click="toggleBatchMode">退出操作</el-button>
+            </template>
           </div>
         </div>
       </template>
 
-      <div ref="gridRef" class="photo-grid" @mousedown="onGridMouseDown">
+      <!-- Grid View -->
+      <div v-if="viewMode === 'grid'" ref="gridRef" class="photo-grid" @mousedown="onGridMouseDown">
         <div v-for="photo in photos" :key="photo.id" class="photo-item"
              :data-photo-id="photo.id"
              :class="{ 'is-selected': selectedIds.includes(photo.id), 'is-batch-mode': batchMode }">
@@ -53,9 +74,39 @@
         <div v-if="photos.length === 0" style="color:#999;padding:40px;text-align:center;width:100%">
           暂无图片，请上传
         </div>
+        <div v-if="batchMode && dragSelect.active" class="drag-overlay" :style="dragOverlayStyle" />
       </div>
 
-      <div v-if="batchMode && dragSelect.active" class="drag-overlay" :style="dragOverlayStyle" />
+      <!-- List View -->
+      <div v-if="viewMode === 'list'" ref="listRef" class="photo-list">
+        <div v-for="photo in photos" :key="photo.id" class="photo-list-item"
+             :data-photo-id="photo.id"
+             :class="{ 'is-selected': selectedIds.includes(photo.id), 'is-batch-mode': batchMode }">
+          <el-checkbox v-if="batchMode" :model-value="selectedIds.includes(photo.id)"
+                       @change="(val: boolean) => toggleSelect(photo.id, val)" />
+          <el-image :src="photo.url" fit="cover"
+                    style="width:80px;height:80px;flex-shrink:0;border-radius:4px"
+                    :preview-src-list="batchMode ? undefined : previewList"
+                    :initial-index="photos.findIndex(p => p.id === photo.id)"
+                    :hide-on-click-modal="true" />
+          <div class="photo-list-info">
+            <div class="photo-list-name" @click.stop>
+              <input v-if="editingId === photo.id" v-model="editName" v-focus
+                     class="photo-name-input" @blur="saveName(photo)" @keydown.enter="($event.target as HTMLElement).blur()" />
+              <span v-else class="photo-name" @click="startEdit(photo)" :title="photo.name">
+                {{ photo.name || '未命名' }}
+              </span>
+            </div>
+            <div class="photo-list-meta">
+              <span>{{ formatSize(photo.file_size) }}</span>
+              <span>{{ photo.width }} x {{ photo.height }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="photos.length === 0" style="color:#999;padding:40px;text-align:center;width:100%">
+          暂无图片，请上传
+        </div>
+      </div>
     </el-card>
 
     <!-- Upload Dialog -->
@@ -90,10 +141,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Delete } from '@element-plus/icons-vue'
+import { UploadFilled, Delete, Grid, List } from '@element-plus/icons-vue'
+import { useDraggable } from 'vue-draggable-plus'
 import request from '@/utils/request'
 
 const route = useRoute()
@@ -103,9 +155,70 @@ const categories = ref<any[]>([])
 const photos = ref<any[]>([])
 const selectedIds = ref<number[]>([])
 const batchMode = ref(false)
+const viewMode = ref<'grid' | 'list'>('grid')
 const gridRef = ref<HTMLElement | null>(null)
+const listRef = ref<HTMLElement | null>(null)
 
 const previewList = computed(() => photos.value.map(p => p.url))
+const allSelected = computed(() => photos.value.length > 0 && selectedIds.value.length === photos.value.length)
+const isIndeterminate = computed(() => selectedIds.value.length > 0 && selectedIds.value.length < photos.value.length)
+
+let sortableDestroy: (() => void) | null = null
+
+function enableSortable() {
+  if (sortableDestroy) { sortableDestroy(); sortableDestroy = null }
+  const elRef = viewMode.value === 'grid' ? gridRef : listRef
+  const instance = useDraggable(elRef, photos, {
+    animation: 150,
+    draggable: viewMode.value === 'grid' ? '.photo-item' : '.photo-list-item',
+    onEnd: onPhotoDragEnd,
+    disabled: batchMode.value,
+  })
+  sortableDestroy = () => instance.destroy()
+}
+
+function disableSortable() {
+  if (sortableDestroy) { sortableDestroy(); sortableDestroy = null }
+}
+
+function onPhotoDragEnd() {
+  const orders = photos.value.map((p: any, idx: number) => ({ id: p.id, sort_order: idx }))
+  request.post(`/albums/${albumId}/photos/reorder/`, { orders })
+}
+
+watch(batchMode, (val) => {
+  if (val) {
+    disableSortable()
+  } else {
+    nextTick(() => enableSortable())
+  }
+})
+
+watch(viewMode, () => {
+  if (!batchMode.value) {
+    nextTick(() => enableSortable())
+  }
+})
+
+function selectAll() { selectedIds.value = photos.value.map((p: any) => p.id) }
+function deselectAll() { selectedIds.value = [] }
+
+async function setAsCover() {
+  if (selectedIds.value.length !== 1) return
+  const photoId = selectedIds.value[0]
+  await request.post(`/albums/${albumId}/photos/${photoId}/set-cover/`)
+  ElMessage.success('已设为首页封面')
+  const targetPhoto = photos.value.find((p: any) => p.id === photoId)
+  if (targetPhoto) album.value.cover = targetPhoto.url
+  fetchAlbum()
+}
+
+function formatSize(bytes: number): string {
+  if (!bytes) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
 
 // Inline rename
 const editingId = ref<number | null>(null)
@@ -136,10 +249,7 @@ const isDragOver = ref(false)
 const pendingFiles = ref<{ file: File; preview: string }[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
-function triggerFileInput() {
-  fileInputRef.value?.click()
-}
-
+function triggerFileInput() { fileInputRef.value?.click() }
 function onDragOver() { isDragOver.value = true }
 function onDragLeave() { isDragOver.value = false }
 
@@ -218,6 +328,10 @@ const dragOverlayStyle = computed(() => {
   }
 })
 
+function currentGridRef() {
+  return viewMode.value === 'grid' ? gridRef.value : listRef.value
+}
+
 function toggleBatchMode() {
   batchMode.value = !batchMode.value
   if (!batchMode.value) selectedIds.value = []
@@ -231,22 +345,24 @@ function toggleSelect(id: number, val: boolean) {
   }
 }
 
-function getGridRect() {
-  return gridRef.value?.getBoundingClientRect() ?? null
-}
-
 function onGridMouseDown(e: MouseEvent) {
   if (!batchMode.value) return
-  if ((e.target as HTMLElement).closest('.photo-item')) return
-  const rect = getGridRect()
+  if ((e.target as HTMLElement).closest(viewMode.value === 'grid' ? '.photo-item' : '.photo-list-item')) return
+  const el = currentGridRef()
+  const rect = el?.getBoundingClientRect() ?? null
   if (!rect) return
-  dragSelect.value = { active: true, startX: e.clientX - rect.left, startY: e.clientY - rect.top, endX: e.clientX - rect.left, endY: e.clientY - rect.top }
+  dragSelect.value = {
+    active: true,
+    startX: e.clientX - rect.left, startY: e.clientY - rect.top,
+    endX: e.clientX - rect.left, endY: e.clientY - rect.top,
+  }
   document.addEventListener('mousemove', onMouseMove)
   document.addEventListener('mouseup', onMouseUp)
 }
 
 function onMouseMove(e: MouseEvent) {
-  const rect = getGridRect()
+  const el = currentGridRef()
+  const rect = el?.getBoundingClientRect() ?? null
   if (!rect) return
   dragSelect.value.endX = Math.max(0, Math.min(e.clientX - rect.left, rect.width))
   dragSelect.value.endY = Math.max(0, Math.min(e.clientY - rect.top, rect.height))
@@ -261,9 +377,11 @@ function onMouseUp() {
     right: Math.max(ds.startX, ds.endX),
     bottom: Math.max(ds.startY, ds.endY),
   }
-  const rect = getGridRect()
+  const el = currentGridRef()
+  const rect = el?.getBoundingClientRect() ?? null
   if (rect) {
-    const items = gridRef.value!.querySelectorAll('.photo-item')
+    const selector = viewMode.value === 'grid' ? '.photo-item' : '.photo-list-item'
+    const items = el!.querySelectorAll(selector)
     items.forEach(el => {
       const itemRect = el.getBoundingClientRect()
       const ix = itemRect.left - rect.left + itemRect.width / 2
@@ -284,6 +402,7 @@ function onMouseUp() {
 onBeforeUnmount(() => {
   document.removeEventListener('mousemove', onMouseMove)
   document.removeEventListener('mouseup', onMouseUp)
+  disableSortable()
 })
 
 async function fetchAlbum() {
@@ -297,6 +416,9 @@ async function fetchCategories() {
 async function fetchPhotos() {
   const res = await request.get(`/albums/${albumId}/photos/`)
   photos.value = res.data.data || []
+  if (!batchMode.value) {
+    nextTick(() => enableSortable())
+  }
 }
 
 async function saveAlbum() {
@@ -320,6 +442,7 @@ onMounted(() => { fetchAlbum(); fetchCategories(); fetchPhotos() })
 </script>
 
 <style scoped>
+/* Grid View */
 .photo-grid {
   display: flex; flex-wrap: wrap; gap: 16px;
   position: relative; user-select: none;
@@ -349,12 +472,30 @@ onMounted(() => { fetchAlbum(); fetchCategories(); fetchPhotos() })
   cursor: text; padding: 2px 4px;
 }
 .photo-name:hover { background: #f0f0f0; border-radius: 2px; }
+
+/* List View */
+.photo-list {
+  display: flex; flex-direction: column; gap: 8px;
+  position: relative; user-select: none;
+}
+.photo-list-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px; border: 1px solid #ebeef5; border-radius: 6px;
+}
+.photo-list-item:hover { background: #f5f7fa; }
+.photo-list-item.is-batch-mode { cursor: pointer; }
+.photo-list-item.is-selected { border-color: #409eff; background: #ecf5ff; }
+.photo-list-info { flex: 1; min-width: 0; }
+.photo-list-name { font-size: 14px; color: #333; }
+.photo-list-meta { font-size: 12px; color: #999; margin-top: 4px; display: flex; gap: 16px; }
+
 .photo-name-input {
   width: 160px; font-size: 13px; text-align: center;
   border: 1px solid #409eff; border-radius: 2px; padding: 2px 4px;
   outline: none;
 }
 .photo-name-input:focus { border-color: #409eff; }
+
 .drag-overlay {
   position: absolute; z-index: 10;
   background: rgba(64, 158, 255, 0.15);
@@ -386,4 +527,6 @@ onMounted(() => { fetchAlbum(); fetchCategories(); fetchPhotos() })
 .pending-del {
   cursor: pointer; color: #f56c6c; flex-shrink: 0;
 }
+
+:deep(.sortable-ghost) { opacity: 0.4; background: #ecf5ff; }
 </style>
