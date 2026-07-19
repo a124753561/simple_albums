@@ -81,9 +81,9 @@
 
       <template #footer>
         <el-button @click="cancelUpload">取消</el-button>
-        <el-button type="primary" :loading="uploading" :disabled="pendingFiles.length === 0" @click="doUpload">
-          上传 {{ pendingFiles.length }} 张
-        </el-button>
+          <el-button type="primary" :loading="uploading" :disabled="pendingFiles.length === 0" @click="doUpload">
+            {{ uploading ? `上传中 (${uploadProgress.current}/${uploadProgress.total})` : `上传 ${pendingFiles.length} 张` }}
+          </el-button>
       </template>
     </el-dialog>
   </div>
@@ -131,6 +131,7 @@ async function saveName(photo: any) {
 // Upload dialog
 const uploadVisible = ref(false)
 const uploading = ref(false)
+const uploadProgress = ref({ current: 0, total: 0 })
 const isDragOver = ref(false)
 const pendingFiles = ref<{ file: File; preview: string }[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -173,22 +174,35 @@ function cancelUpload() {
   uploadVisible.value = false
 }
 
+const BATCH_SIZE = 5
+
 async function doUpload() {
   uploading.value = true
-  const formData = new FormData()
-  for (const f of pendingFiles.value) {
-    formData.append('files', f.file)
+  const total = pendingFiles.value.length
+  const totalBatches = Math.ceil(total / BATCH_SIZE)
+  uploadProgress.value = { current: 0, total: totalBatches }
+  let successCount = 0
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+    const batch = pendingFiles.value.slice(i, i + BATCH_SIZE)
+    const formData = new FormData()
+    for (const f of batch) formData.append('files', f.file)
+    try {
+      await request.post(`/albums/${albumId}/photos/upload/`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      })
+      successCount++
+    } catch { /* 单批失败继续传下一批 */ }
+    uploadProgress.value = { current: Math.floor(i / BATCH_SIZE) + 1, total: totalBatches }
   }
-  try {
-    await request.post(`/albums/${albumId}/photos/upload/`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    ElMessage.success('上传成功')
-    pendingFiles.value.forEach(f => URL.revokeObjectURL(f.preview))
-    pendingFiles.value = []
-    uploadVisible.value = false
-    fetchPhotos(); fetchAlbum()
-  } catch { /* handled */ } finally { uploading.value = false }
+  if (successCount > 0) {
+    ElMessage.success(`上传完成 (${successCount}/${totalBatches} 批)`)
+  }
+  pendingFiles.value.forEach(f => URL.revokeObjectURL(f.preview))
+  pendingFiles.value = []
+  uploadVisible.value = false
+  uploading.value = false
+  fetchPhotos(); fetchAlbum()
 }
 
 // Drag select
